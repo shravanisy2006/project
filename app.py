@@ -1,6 +1,5 @@
 import streamlit as st
 import pandas as pd
-import numpy as np
 from sklearn.preprocessing import StandardScaler
 from sklearn.cluster import KMeans
 
@@ -41,7 +40,7 @@ clusters = kmeans.fit_predict(scaled_data)
 
 movie_matrix['Cluster'] = clusters
 
-# -------------------- SESSION STATE --------------------
+# -------------------- SESSION --------------------
 if "user_ratings" not in st.session_state:
     st.session_state.user_ratings = {}
 
@@ -52,28 +51,21 @@ def rate_movie(movie_id, rating):
 def recommend(movie_id, genre=None):
     if movie_id not in movie_matrix.index:
         return pd.DataFrame()
-
     cluster = movie_matrix.loc[movie_id, 'Cluster']
     similar_movies = movie_matrix[movie_matrix['Cluster'] == cluster].index
-
     result = movies[movies['movieId'].isin(similar_movies)]
-
     if genre:
         result = result[result['genres'].str.contains(genre, case=False)]
-
     return result.sort_values(by='avg_rating', ascending=False).head(10)
 
 def personalized():
     if not st.session_state.user_ratings:
         return pd.DataFrame()
-
     liked = [mid for mid, r in st.session_state.user_ratings.items() if r >= 4]
     if not liked:
         return pd.DataFrame()
-
     clusters = movie_matrix.loc[liked]['Cluster']
     rec = movie_matrix[movie_matrix['Cluster'].isin(clusters)].index
-
     result = movies[movies['movieId'].isin(rec)]
     return result.sort_values(by='avg_rating', ascending=False).head(10)
 
@@ -87,7 +79,7 @@ def popular():
     return movies.sort_values(by='popularity', ascending=False).head(10)
 
 # -------------------- DISPLAY GRID --------------------
-def display_movies(df):
+def display_movies(df, section):
 
     cols = st.columns(5)
 
@@ -96,67 +88,121 @@ def display_movies(df):
             st.subheader(row['title'][:25])
             st.write("⭐", round(row['avg_rating'],2))
 
-            rating = st.slider("Rate", 1, 5, key=f"rate{row['movieId']}")
+            rating = st.slider(
+                "Rate", 1, 5,
+                key=f"{section}_rate_{row['movieId']}"
+            )
 
-            if st.button("Submit", key=f"btn{row['movieId']}"):
+            if st.button(
+                "Submit",
+                key=f"{section}_btn_{row['movieId']}"
+            ):
                 rate_movie(row['movieId'], rating)
                 st.success("Saved!")
 
 # -------------------- UI --------------------
 
+st.set_page_config(page_title="Movie Recommender", layout="wide")
 st.title("🎬 Smart Movie Recommendation System")
 
-# Sidebar
-st.sidebar.header("🔍 Controls")
+# -------------------- TABS --------------------
 
-movie_id = st.sidebar.number_input("Enter Movie ID", min_value=1, step=1)
-genre = st.sidebar.selectbox("Select Genre", ["", "Action","Comedy","Drama","Romance","Thriller","Sci-Fi"])
+tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
+    "🏠 Home",
+    "🎯 Recommend",
+    "🔥 Popular",
+    "⭐ Top Rated",
+    "🎭 Genre",
+    "👤 My Space"
+])
 
-if st.sidebar.button("Recommend"):
+# -------------------- HOME --------------------
 
-    st.subheader("🎯 Recommended Movies")
-    recs = recommend(movie_id, genre)
+with tab1:
+    st.header("Welcome 🎉")
 
-    if recs.empty:
-        st.warning("No recommendations found")
-    else:
-        display_movies(recs)
+    col1, col2, col3 = st.columns(3)
 
-# -------------------- PERSONALIZED --------------------
+    with col1:
+        if st.button("🔥 Popular Movies"):
+            display_movies(popular(), "home_pop")
 
-st.subheader("🔥 Recommended For You")
+    with col2:
+        if st.button("⭐ Top Rated"):
+            display_movies(top_rated(), "home_top")
 
-pers = personalized()
+    with col3:
+        if st.button("🎯 Recommend Movies"):
+            st.info("Go to Recommend tab")
 
-if pers.empty:
-    st.info("Rate some movies to unlock recommendations")
-else:
-    display_movies(pers)
+    st.subheader("🎲 Surprise Me")
 
-# -------------------- CONTINUE WATCHING --------------------
+    if st.button("Give Random Movie"):
+        random_movie = movies.sample(5)
+        display_movies(random_movie, "random")
 
-st.subheader("▶️ Continue Watching")
+# -------------------- RECOMMEND --------------------
 
-liked = [mid for mid, r in st.session_state.user_ratings.items() if r >= 4]
-cont = movies[movies['movieId'].isin(liked)]
+with tab2:
+    st.header("🎯 Recommendation")
 
-if not cont.empty:
-    display_movies(cont.head(10))
+    movie_id = st.number_input("Enter Movie ID", min_value=1, step=1)
+    genre = st.selectbox("Genre Filter", ["", "Action","Comedy","Drama","Romance"])
 
-# -------------------- GENRE --------------------
+    if st.button("Recommend Now"):
+        recs = recommend(movie_id, genre)
 
-st.subheader("🎭 Browse by Genre")
-
-g = st.selectbox("Choose Genre", ["Action","Comedy","Drama","Romance"])
-
-display_movies(genre_recommend(g))
-
-# -------------------- TOP --------------------
-
-st.subheader("⭐ Top Rated")
-display_movies(top_rated())
+        if recs.empty:
+            st.warning("No recommendations found")
+        else:
+            display_movies(recs, "recommend")
 
 # -------------------- POPULAR --------------------
 
-st.subheader("🔥 Popular Movies")
-display_movies(popular())
+with tab3:
+    st.header("🔥 Popular Movies")
+
+    if st.button("Show Popular"):
+        display_movies(popular(), "popular")
+
+# -------------------- TOP --------------------
+
+with tab4:
+    st.header("⭐ Top Rated")
+
+    if st.button("Show Top Rated"):
+        display_movies(top_rated(), "top")
+
+# -------------------- GENRE --------------------
+
+with tab5:
+    st.header("🎭 Genre")
+
+    g = st.selectbox("Choose Genre", ["Action","Comedy","Drama","Romance"])
+
+    if st.button("Show Genre Movies"):
+        display_movies(genre_recommend(g), "genre")
+
+# -------------------- MY SPACE --------------------
+
+with tab6:
+    st.header("👤 My Space")
+
+    st.subheader("▶️ Continue Watching")
+
+    liked = [mid for mid, r in st.session_state.user_ratings.items() if r >= 4]
+    cont = movies[movies['movieId'].isin(liked)]
+
+    if not cont.empty:
+        display_movies(cont, "continue")
+    else:
+        st.info("No liked movies yet")
+
+    st.subheader("🔥 Recommended For You")
+
+    pers = personalized()
+
+    if not pers.empty:
+        display_movies(pers, "personalized")
+    else:
+        st.info("Rate movies to unlock recommendations")
