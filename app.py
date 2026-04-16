@@ -4,7 +4,7 @@ import numpy as np
 from sklearn.preprocessing import StandardScaler
 from sklearn.cluster import KMeans
 
-# ---------------------- LOAD DATA ----------------------
+# -------------------- LOAD DATA --------------------
 @st.cache_data
 def load_data():
     movies = pd.read_csv("movies.csv")
@@ -15,12 +15,12 @@ def load_data():
 
 movies, ratings, tags, links = load_data()
 
-# ---------------------- MERGE DATA ----------------------
+# -------------------- MERGE --------------------
 df = ratings.merge(movies, on="movieId")
-df = df.merge(tags, on=["userId", "movieId"], how="left")
+df = df.merge(tags, on=["userId","movieId"], how="left")
 df['tag'] = df['tag'].fillna("")
 
-# ---------------------- FEATURE ENGINEERING ----------------------
+# -------------------- FEATURES --------------------
 avg_rating = ratings.groupby('movieId')['rating'].mean()
 popularity = ratings.groupby('movieId')['rating'].count()
 
@@ -29,20 +29,25 @@ movies['popularity'] = movies['movieId'].map(popularity)
 
 movies.fillna(0, inplace=True)
 
-# ---------------------- MATRIX ----------------------
+# -------------------- MATRIX --------------------
 movie_matrix = ratings.pivot_table(index='movieId', columns='userId', values='rating').fillna(0)
 
-# ---------------------- SCALING ----------------------
+# -------------------- CLUSTERING --------------------
 scaler = StandardScaler()
 scaled_data = scaler.fit_transform(movie_matrix)
 
-# ---------------------- KMEANS ----------------------
 kmeans = KMeans(n_clusters=5, random_state=42)
 clusters = kmeans.fit_predict(scaled_data)
 
 movie_matrix['Cluster'] = clusters
 
-# ---------------------- FUNCTIONS ----------------------
+# -------------------- SESSION STATE --------------------
+if "user_ratings" not in st.session_state:
+    st.session_state.user_ratings = {}
+
+# -------------------- FUNCTIONS --------------------
+def rate_movie(movie_id, rating):
+    st.session_state.user_ratings[movie_id] = rating
 
 def recommend(movie_id, genre=None):
     if movie_id not in movie_matrix.index:
@@ -58,113 +63,100 @@ def recommend(movie_id, genre=None):
 
     return result.sort_values(by='avg_rating', ascending=False).head(10)
 
+def personalized():
+    if not st.session_state.user_ratings:
+        return pd.DataFrame()
 
-def top_rated():
-    return movies.sort_values(by='avg_rating', ascending=False).head(10)
+    liked = [mid for mid, r in st.session_state.user_ratings.items() if r >= 4]
+    if not liked:
+        return pd.DataFrame()
 
+    clusters = movie_matrix.loc[liked]['Cluster']
+    rec = movie_matrix[movie_matrix['Cluster'].isin(clusters)].index
 
-def popular_movies():
-    return movies.sort_values(by='popularity', ascending=False).head(10)
-
+    result = movies[movies['movieId'].isin(rec)]
+    return result.sort_values(by='avg_rating', ascending=False).head(10)
 
 def genre_recommend(genre):
     return movies[movies['genres'].str.contains(genre, case=False)].sort_values(by='avg_rating', ascending=False).head(10)
 
+def top_rated():
+    return movies.sort_values(by='avg_rating', ascending=False).head(10)
 
-# ---------------------- UI ----------------------
+def popular():
+    return movies.sort_values(by='popularity', ascending=False).head(10)
 
-st.set_page_config(page_title="🎬 Movie Recommender", layout="wide")
+# -------------------- DISPLAY GRID --------------------
+def display_movies(df):
 
-st.markdown(
-    """
-    <style>
-    .title {
-        font-size:40px;
-        font-weight:bold;
-        color:#FF4B4B;
-    }
-    .card {
-        padding:15px;
-        border-radius:15px;
-        background-color:#1e1e1e;
-        margin-bottom:10px;
-    }
-    </style>
-    """,
-    unsafe_allow_html=True
-)
+    cols = st.columns(5)
 
-st.markdown('<div class="title">🎬 Smart Movie Recommendation System</div>', unsafe_allow_html=True)
+    for i, (_, row) in enumerate(df.iterrows()):
+        with cols[i % 5]:
+            st.subheader(row['title'][:25])
+            st.write("⭐", round(row['avg_rating'],2))
 
-# ---------------------- SIDEBAR ----------------------
+            rating = st.slider("Rate", 1, 5, key=f"rate{row['movieId']}")
 
-st.sidebar.header("🔍 Filters")
+            if st.button("Submit", key=f"btn{row['movieId']}"):
+                rate_movie(row['movieId'], rating)
+                st.success("Saved!")
+
+# -------------------- UI --------------------
+
+st.title("🎬 Smart Movie Recommendation System")
+
+# Sidebar
+st.sidebar.header("🔍 Controls")
 
 movie_id = st.sidebar.number_input("Enter Movie ID", min_value=1, step=1)
+genre = st.sidebar.selectbox("Select Genre", ["", "Action","Comedy","Drama","Romance","Thriller","Sci-Fi"])
 
-genre = st.sidebar.selectbox("Select Genre", ["", "Action", "Comedy", "Drama", "Romance", "Thriller", "Sci-Fi"])
-
-# ---------------------- BUTTON ----------------------
-
-if st.sidebar.button("🎯 Recommend"):
+if st.sidebar.button("Recommend"):
 
     st.subheader("🎯 Recommended Movies")
-
     recs = recommend(movie_id, genre)
 
     if recs.empty:
         st.warning("No recommendations found")
     else:
-        for _, row in recs.iterrows():
-            st.markdown(f"""
-            <div class="card">
-            <b>{row['title']}</b><br>
-            ⭐ Rating: {round(row['avg_rating'],2)}<br>
-            🎭 Genre: {row['genres']}
-            </div>
-            """, unsafe_allow_html=True)
+        display_movies(recs)
 
+# -------------------- PERSONALIZED --------------------
 
-# ---------------------- GENRE SECTION ----------------------
+st.subheader("🔥 Recommended For You")
 
-st.subheader("🎭 Genre-Based Recommendations")
+pers = personalized()
 
-selected_genre = st.selectbox("Choose Genre", ["Action", "Comedy", "Drama", "Romance"])
+if pers.empty:
+    st.info("Rate some movies to unlock recommendations")
+else:
+    display_movies(pers)
 
-genre_movies = genre_recommend(selected_genre)
+# -------------------- CONTINUE WATCHING --------------------
 
-for _, row in genre_movies.iterrows():
-    st.markdown(f"""
-    <div class="card">
-    <b>{row['title']}</b><br>
-    ⭐ Rating: {round(row['avg_rating'],2)}
-    </div>
-    """, unsafe_allow_html=True)
+st.subheader("▶️ Continue Watching")
 
-# ---------------------- TOP RATED ----------------------
+liked = [mid for mid, r in st.session_state.user_ratings.items() if r >= 4]
+cont = movies[movies['movieId'].isin(liked)]
 
-st.subheader("⭐ Top Rated Movies")
+if not cont.empty:
+    display_movies(cont.head(10))
 
-top = top_rated()
+# -------------------- GENRE --------------------
 
-for _, row in top.iterrows():
-    st.markdown(f"""
-    <div class="card">
-    <b>{row['title']}</b><br>
-    ⭐ {round(row['avg_rating'],2)}
-    </div>
-    """, unsafe_allow_html=True)
+st.subheader("🎭 Browse by Genre")
 
-# ---------------------- POPULAR ----------------------
+g = st.selectbox("Choose Genre", ["Action","Comedy","Drama","Romance"])
+
+display_movies(genre_recommend(g))
+
+# -------------------- TOP --------------------
+
+st.subheader("⭐ Top Rated")
+display_movies(top_rated())
+
+# -------------------- POPULAR --------------------
 
 st.subheader("🔥 Popular Movies")
-
-pop = popular_movies()
-
-for _, row in pop.iterrows():
-    st.markdown(f"""
-    <div class="card">
-    <b>{row['title']}</b><br>
-    👥 {int(row['popularity'])} ratings
-    </div>
-    """, unsafe_allow_html=True)
+display_movies(popular())
